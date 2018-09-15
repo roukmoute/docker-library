@@ -18,7 +18,7 @@ ENV JAVA_VERSION 8u171
 ENV JAVA_ALPINE_VERSION 8.171.11-r0
 
 RUN set -ex \
-	&& apk add --upgrade --update-cache git python3 openjdk8="$JAVA_ALPINE_VERSION" \
+	&& apk --no-cache add --upgrade --update-cache git python3 openjdk8="$JAVA_ALPINE_VERSION" \
 	&& [ "$JAVA_HOME" = "$(docker-java-home)" ]
 
 ENV DISPLAY=${DISPLAY:-":0"}
@@ -31,7 +31,7 @@ RUN adduser -D -u $unix_ID developer \
     && touch /home/developer/$phpstorm_folder/.keep \
     && chown -R developer.developer /home/developer \
     && mkdir -p /opt/phpstorm \
-    && wget -O - https://download-cf.jetbrains.com/webide/PhpStorm-2018.2.2.tar.gz | tar xzf - --strip-components=1 -C "/opt/phpstorm"
+    && wget -O - https://download-cf.jetbrains.com/webide/PhpStorm-2018.2.3.tar.gz | tar xzf - --strip-components=1 -C "/opt/phpstorm"
 
 USER developer
 VOLUME /home/developer/$phpstorm_folder
