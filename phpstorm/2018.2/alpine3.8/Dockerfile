@@ -1,6 +1,5 @@
 FROM jlesage/baseimage-gui:alpine-3.8
-
-MAINTAINER Mathias STRASSER "contact@roukmoute.fr"
+LABEL maintainer="Mathias STRASSER <contact@roukmoute.fr>"
 
 # add a simple script that can auto-detect the appropriate JAVA_HOME value
 # based on whether the JDK or only the JRE is installed
