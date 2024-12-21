@@ -1,81 +1,64 @@
-# Définition des variables d'environnement pour Composer et PHP
-# https://docs.docker.com/engine/reference/builder/#understand-how-arg-and-from-interact
-ARG COMPOSER_VERSION=2
-ARG PHP_VERSION=8.3-rc
+FROM php:8.4-fpm
 
-# Utilisation de l'image Composer pour installer les dépendances
-FROM composer:${COMPOSER_VERSION} as composer
-# Utilisation de l'image PHP-FPM Alpine
-FROM php:${PHP_VERSION}-fpm-alpine
-
-# Définition de la zone horaire de Paris
-ENV TZ="Europe/Paris"
-
-RUN apk add --no-cache --virtual .build-deps \
-    $PHPIZE_DEPS \
-    autoconf \
-    bind-tools \
-    ca-certificates \
-    freetype-dev \
+# Installer des dépendances nécessaires et extensions PHP
+RUN apt-get update && apt-get install -y \
     git \
-    gnupg \
-    libjpeg-turbo \
-    libjpeg-turbo-dev \
-    libmemcached-dev \
-    libpng \
-    libpng-dev \
-    libssh2 \
-    libssh2-dev \
-    libxml2-dev \
-    libzip-dev \
-    make \
-    postgresql-dev \
-    sudo \
     unzip \
+    libzip-dev \
     zip \
-    zlib-dev \
-    # Installation de dépendances PHP supplémentaires pour l'internationalisation (intl)
-    tzdata \
-    icu-dev \
-    icu-data-full \
-    # Configuration de la zone horaire et des extensions PHP
-    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
-    && docker-php-ext-configure intl \
-    && docker-php-ext-configure gd --with-freetype=/usr/include/ --with-jpeg=/usr/include/ \
-    && docker-php-ext-install bcmath calendar gd intl opcache pcntl pdo pdo_pgsql soap zip \
-    # Installation de pcov, xdebug, memcached, ast et ssh2
-    && pecl install pcov memcached ast ssh2-1.3.1 \
-    && docker-php-ext-enable gd ssh2 pcov memcached ast \
-    #    && pecl install xdebug && docker-php-ext-enable xdebug \
-    && docker-php-source delete \
-    # Installation de gosu pour permettre un changement d'utilisateur sûr
-    && apk add gosu --update --no-cache --repository http://dl-3.alpinelinux.org/alpine/edge/testing/ --allow-untrusted \
-    && addgroup webuser \
-    && adduser -D -s /bin/sh -G webuser webuser \
-    && adduser -D -s /bin/sh docker sudo \
-    && mkdir -p /app
+    libicu-dev \
+    libpq-dev \
+    iproute2 \
+    gosu \
+    && echo "dockeruser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers \
+    && docker-php-ext-install pdo_pgsql zip intl opcache \
+    && apt-get clean
 
-# Ajout de Xdebug
-RUN apk add --update linux-headers
-RUN apk add -U php8-dev --repository=http://dl-cdn.alpinelinux.org/alpine/edge/testing
-RUN git clone https://github.com/xdebug/xdebug.git \
-    && cd xdebug \
-    && phpize \
-    && ./configure \
-    && make \
-    && make install \
-    && cd .. \
+# Installer et activer Xdebug via PECL
+RUN pecl install xdebug \
     && docker-php-ext-enable xdebug
 
-# Ajout de la configuration de sudoers
-RUN echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
-RUN rm -rf /var/cache/apk/*
+RUN mkdir -p /usr/local/etc/php/conf.d && \
+    chmod -R 0777 /usr/local/etc/php/conf.d
 
-COPY --from=composer /usr/bin/composer /usr/bin/composer
+#
+## Désactiver short_open_tag dans php.ini
+#RUN { \
+#    echo 'short_open_tag = Off'; \
+#    echo 'opcache.enable=1'; \
+#    echo 'opcache.memory_consumption=128'; \
+#    echo 'opcache.interned_strings_buffer=8'; \
+#    echo 'opcache.max_accelerated_files=10000'; \
+#    echo 'opcache.revalidate_freq=2'; \
+#    echo 'opcache.fast_shutdown=1'; \
+#  } > /usr/local/etc/php/conf.d/opcache-recommended.ini
+
+# Ajouter l'utilisateur non-root user
+RUN groupadd dockeruser && \
+    # Crée un groupe
+    groupadd docker_group && \
+    # Crée un utilisateur dockeruser avec le shell /bin/sh, associé au groupe docker_group
+    useradd -m -s /bin/bash -g docker_group dockeruser && \
+    # Crée un utilisateur docker et l'ajouter au groupe sudo
+    useradd -m -s /bin/bash -G sudo docker && \
+    ls -ld /home/dockeruser && \
+    # Crée le répertoire /app
+    mkdir -p /app
+
+# Installer Composer
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+# Télécharge et installe le binaire Symfony
+RUN curl -sS https://get.symfony.com/cli/installer | bash \
+    && mv /root/.symfony*/bin/symfony /usr/local/bin/symfony
 
 # Copie de la configuration de PHP
 COPY php.ini ${PHP_INI_DIR}/php.ini
+COPY php-ini-overrides.php ${PHP_INI_DIR}/php-ini-overrides.php
+
+# Copie les configurations des extensions
+COPY opcache.ini /usr/local/etc/php/conf.d/docker-php-ext-opcache.ini
 
 # Configuration du répertoire de travail
 WORKDIR /app
@@ -84,5 +67,14 @@ WORKDIR /app
 COPY entrypoint.sh /entrypoint
 RUN chmod +x /entrypoint
 
-ENTRYPOINT ["/entrypoint"]
+# Définition du prompt (PS1) pour le shell interactif :
+# - `\[\e[38;5;81m\]` : Séquence d'échappement ANSI pour définir la couleur du texte à un bleu clair spécifique du modèle de couleur 256.
+# - `🐳 DOCKER:` : Affiche l'emoji de la baleine suivi du texte "DOCKER" en bleu clair.
+# - `\[\e[0m\]` : Séquence d'échappement ANSI pour réinitialiser les couleurs à leurs valeurs par défaut.
+# - `\w` : Variable du shell qui affiche le chemin du répertoire de travail courant.
+# - `\$` : Affiche le symbole `$`
+# La commande echo ajoute cette définition de prompt au fichier `.bashrc` de l'utilisateur root du conteneur,
+# de sorte que chaque fois qu'un shell interactif est démarré, ce prompt personnalisé est utilisé.
+RUN echo "export PS1='[\[\e[38;5;245m\]🐳 DOCKER:\[\e[38;5;64m\]\w\[\e[38;5;245m\]\[\e[0m\]]\$ '" >> /root/.bashrc
 
+ENTRYPOINT ["/entrypoint"]
